@@ -1,39 +1,49 @@
 package users
 
 import (
-	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
 
 type User struct {
-	gorm.Model
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	ID        uint   `gorm:"primaryKey"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 func hashPassword(new_password string) string {
 	return new_password
 }
 
-func CreateUser(username, password string, db *gorm.DB) (User, error) {
-	var test User
-	if err := db.Where(&User{Username: username}).First(&test).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			fmt.Println("An error has occurred", err)
-			return User{}, err
-		} else {
-			user := User{Username: username, Password: hashPassword(password)}
-			result := db.Create(&user)
-			if result.Error != nil {
-				fmt.Println("An error has occurred", result.Error)
-			}
-			fmt.Println(user.ID, user.Username)
-			return user, nil
-		}
+func (u *User) usernameExists(db *gorm.DB) bool {
+	result := db.Where(&User{ID: u.ID}).Limit(1).Find(&u)
+	if result.Error != nil {
+		return false
 	}
-	return User{}, fmt.Errorf("user already exists")
+
+	if result.RowsAffected == 0 {
+		return false
+	}
+	return true
+}
+
+func (u *User) CreateUser(db *gorm.DB) error {
+	t := User{Username: u.Username}
+	exists := t.usernameExists(db)
+	if !exists {
+		return fmt.Errorf(USER_EXISTS)
+	}
+	u.Password = hashPassword(u.Password)
+	result := db.Create(&u)
+	if result.Error != nil {
+		fmt.Println("An error has occurred", result.Error)
+	}
+	return nil
 }
 
 func ListUsers(db *gorm.DB) ([]User, error) {
@@ -46,22 +56,20 @@ func ListUsers(db *gorm.DB) ([]User, error) {
 	return users, nil
 }
 
-func FetchUser(username string, db *gorm.DB) (User, error) {
-	var user User
-	if err := db.Where(&User{Username: username}).Limit(1).Find(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return User{}, fmt.Errorf("user does not exist")
-		} else {
-			fmt.Println("An error has occurred", err)
-			return User{}, err
-		}
+func (u *User) FetchUser(db *gorm.DB) error {
+	result := db.Where(&User{ID: u.ID}).Limit(1).Find(&u)
+	if result.Error != nil {
+		return result.Error
 	}
 
-	return user, nil
+	if result.RowsAffected == 0 {
+		return fmt.Errorf(USER_NOT_EXISTS)
+	}
+	return nil
 }
 
-func (u *User) UpdateUser(new_password string, db *gorm.DB) error {
-	if err := db.Model(&u).Update("password", hashPassword(new_password)).Error; err != nil {
+func (u *User) UpdateUser(db *gorm.DB) error {
+	if err := db.Model(&u).Update("password", hashPassword(u.Password)).Error; err != nil {
 		return err
 	}
 	return nil
